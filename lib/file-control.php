@@ -1,558 +1,412 @@
-﻿<?php
-include("headers.php");
-include("settings.php");
-$t = $text['file-control'];
-?>
-<?php if ($_SESSION['githubDiff']) { ?>
-<script src="github.js"></script>
-<script src="underscore-min.js"></script>
-<?php ;}; ?>
-<script>
 <?php
-// Get the save type if any
-$saveType = isset($_GET['saveType']) ? strClean($_GET['saveType']) : "";
+require "icecoder.php";
+
+use ICEcoder\ExtraProcesses;
+use ICEcoder\Backup;
+use ICEcoder\File;
+use ICEcoder\System;
+use ICEcoder\URL;
+
+$backupClass = new Backup;
+$fileClass = new File;
+$systemClass = new System;
+
+$t = $text['file-control'];
+
+// ===============================
+// SET OUR ERROR INFO TO A DEFAULT
+// ===============================
+
+$error = false;
+$errorStr = "false";
+$errorMsg = "None";
+
+// ==============================
+// GET CLEANED FILENAMES OR ERROR
+// ==============================
+
+// Is this a save as?
+$saveAs = isset($_GET['saveType'])
+    ? ("saveAs" === $_GET['saveType'])
+    : false;
+
+// Is this an autosave while creating a new file?
+$newFileAutoSave = isset($_GET['newFileAutoSave'])
+    ? ("true" === $_GET['newFileAutoSave'])
+    : false;
+
+// Is this an autosave while creating a new file?
+if (true === isset($_GET['tabNum'])) {
+    $tabNum = $_GET['tabNum'];
+}
 
 // Establish the filename/new filename
-$file = str_replace("|","/",strClean(
-	isset($_POST['newFileName']) && $_POST['newFileName']!=""
-	? $_POST['newFileName']
-	: $_GET['file']
-	));
-
-// Put the original $file var aside for use
-$fileOrig = $file;
-
-// Trim any +'s or spaces from the end of file
-$file = rtrim(rtrim($file,'+'),' ');
-
-// Also remove [NEW] from $file, we can consider $_GET['action'] or $fileOrig to pick that up
-$file = rtrim($file,'[NEW]');
-
-// Make each path in $file a full path (; seperated list)
-$allFiles = explode(";",$file);
-for ($i=0; $i<count($allFiles); $i++) {
-	if (strpos($allFiles[$i],$docRoot)===false && $_GET['action']!="getRemoteFile") {
-		$allFiles[$i]=str_replace("|","/",$docRoot.$iceRoot.$allFiles[$i]);
-	}
+// New file
+if (isset($_POST['newFileName']) && "" != $_POST['newFileName']) {
+    $file = $_POST['newFileName'];
+// Existing file
+} elseif (isset($_REQUEST['file'])) {
+    $file = $_REQUEST['file'];
+// Error
+} else {
+    $file = "";
+    $finalAction = "nothing";
+    $doNext = "";
+    $error = true;
+    $errorStr = "true";
+    $errorMsg = $t['Sorry, bad filename...'];
 };
-$file = implode(";",$allFiles);
 
-// Establish the $fileLoc and $fileName (used in single file cases, eg opening. Multiple file cases, eg deleting, is worked out in that loop)
-$fileLoc = substr(str_replace($docRoot,"",$file),0,strrpos(str_replace($docRoot,"",$file),"/"));
-$fileName = basename($file);
-
-// Check through all files to make sure they're valid/safe
-$allFiles = explode(";",$file);
-for ($i=0; $i<count($allFiles); $i++) {
-
-	// Uncomment to alert and console.log the action and file, useful for debugging
-	// echo ";alert('".xssClean($_GET['action'],"html")." : ".$allFiles[$i]."');console.log('".xssClean($_GET['action'],"html")." : ".$allFiles[$i]."');";
-
-	// Die if the file requested isn't something we expect
-	if(
-		// A local folder that isn't the doc root or starts with the doc root
-		($_GET['action']!="getRemoteFile" &&
-			rtrim($allFiles[$i],"/") !== rtrim($docRoot,"/") &&
-			strpos(realpath(rtrim(dirname($allFiles[$i]),"/")),realpath(rtrim($docRoot,"/"))) !== 0
-		) ||
-		// Or a remote URL that doesn't start http
-		($_GET['action']=="getRemoteFile" && strpos($allFiles[$i],"http") !== 0)
-		) {
-		die("alert('Sorry! - problem with file requested');</script>");
-	};
+// If we have file(s) to work with...
+if (false === $error) {
+    $fileClass->check();
+    if ("load" === $_GET['action'] && true === $error) {
+        die("parent.parent.ICEcoder.message('" . $errorMsg . "');parent.parent.ICEcoder.serverMessage();parent.parent.ICEcoder.serverQueue(\"del\");</script>");
+    }
 }
+
+$doNext = "";
+
+// =============
+// LOADING FILES
+// =============
 
 // If we're due to open a file...
-if ($_GET['action']=="load") {
-	echo 'action="load";';
+if (!$error && "load" === $_GET['action']) {
+    echo '<script>';
+    $fileClass->load();
+    echo $fileClass->returnLoadTextScript();
+    echo $fileClass->returnLoadImageScript();
+    ?>
+    parent.parent.ICEcoder.serverMessage(); parent.parent.ICEcoder.serverQueue("del");
 
-	if (file_exists($file)) {
-		$finfo = "text";
-		// Determine what to do based on mime type
-		if (function_exists('finfo_open')) {
-			$finfoMIME = finfo_open(FILEINFO_MIME);
-			$finfo = finfo_file($finfoMIME, $file);
-			finfo_close($finfoMIME);
-		} else {
-			$fileExt = explode(" ",pathinfo($file, PATHINFO_EXTENSION));
-			$fileExt = $fileExt[0];
-			if (array_search($fileExt,array("gif","jpg","jpeg","png"))!==false) {$finfo = "image";};
-			if (array_search($fileExt,array("doc","docx","ppt","rtf","pdf","zip","tar","gz","swf","asx","asf","midi","mp3","wav","aiff","mov","qt","wmv","mp4","odt","odg","odp"))!==false) {$finfo = "other";};
-		}
-		if (strpos($finfo,"text")===0 || strpos($finfo,"empty")!==false) {
-			echo 'fileType="text";';
-			echo 'top.ICEcoder.shortURL = top.ICEcoder.thisFileFolderLink = "'.$fileLoc."/".$fileName.'";';
-			$loadedFile = toUTF8noBOM(file_get_contents($file,false,$context),true);
-			echo '</script><textarea name="loadedFile" id="loadedFile">'.str_replace("</textarea>","<ICEcoder:/:textarea>",str_replace("&","&amp;",$loadedFile)).'</textarea><script>';
-			// Run our custom processes
-			include_once("../processes/on-file-load.php");
-		} else if (strpos($finfo,"image")===0) {
-			echo 'fileType="image";fileName=\''.$fileLoc."/".$fileName.'\';';
-		} else {
-			echo 'fileType="other";window.open(\'http://'.$_SERVER['SERVER_NAME'].$fileLoc."/".$fileName.'\');';
-		};
-	} else {
-		echo 'fileType="nothing"; top.ICEcoder.message(\''.$t['Sorry'].', '.$fileLoc."/".$fileName.' '.$t['does not seem...'].'\');';
-	}
+    // Finally, switch mode in case we have saved, renamed file etc
+    parent.parent.ICEcoder.switchMode();
+    </script>
+    <?php
+    exit;
+}
 
+// ============
+// SAVING FILES
+// ============
+
+if (!$error && "save" === $_GET['action']) {
+
+    // ====================================
+    // NEW FILES AND SAVE AS XHR LOOPAROUND
+    // ====================================
+
+    if (0 < strpos($fileOrig, "[NEW]") || true === $saveAs) {
+        $finalAction = 0 < strpos($fileOrig, "[NEW]") ? "save as" : "save";
+        $fileURL = isset($file) ? $file : "";
+        $fileMDTURLPart = isset($_GET["fileMDT"]) && "undefined" !== $_GET["fileMDT"] ? "&fileMDT=" . numClean($_GET['fileMDT']) : "";
+        $fileVersionURLPart = isset($_GET["fileVersion"]) && "undefined" !== $_GET["fileVersion"] ? "&fileVersion=" . numClean($_GET['fileVersion']) : "";
+        $fileDetails = [
+            "docRoot" => $docRoot,
+            "fileLoc" => $fileLoc,
+            "fileURL" => $fileURL,
+            "fileName" => $fileName,
+            "fileMDTURLPart" => $fileMDTURLPart,
+            "fileVersionURLPart" => $fileVersionURLPart
+        ];
+        $doNext .= $fileClass->handleSaveLooparound($fileDetails, $finalAction, $t);
+
+        // ===================
+        // FILE CONTENT SAVING
+        // ===================
+
+    } elseif (isset($_POST['changes']) || isset($_POST['contents'])) {
+        $finalAction = isset($_POST["newFileName"]) ? "save as" : "save";
+
+        // =================
+        // FILE IS WRITEABLE
+        // =================
+
+        if (!$demoMode && ((file_exists($file) && is_writable($file)) || isset($_POST['newFileName']) && "" != $_POST['newFileName'])) {
+
+            $filemtime = "Windows" !== $serverType && file_exists($file) ? filemtime($file) : "1000000";
+
+            // ==================================================
+            // MDT'S MATCH (OR WE'RE SAVING NEW FILE), WRITE FILE
+            // ==================================================
+            if (!(isset($_GET['fileMDT'])) || $filemtime == $_GET['fileMDT'] || isset($_POST['newFileName'])) {
+
+                // Write file
+                $fileClass->writeFile();
+
+                // Save a version controlled backup source of the file
+                if ($ICEcoder["backupsKept"]) {
+                    $backupClass->makeBackup($fileLoc, $fileName, $contents);
+                }
+
+                $doNext .= $fileClass->updateUI();
+                $doNext .= $fileClass->handleMarkdown();
+                $doNext .= $fileClass->handleDiffPane();
+                $doNext .= $fileClass->finaliseSave();
+                $doNext .= $fileClass->compileSass();
+                $doNext .= $fileClass->compileLess();
+
+                // Run any extra processes
+                $extraProcessesClass = new ExtraProcesses($fileLoc, $fileName);
+                $doNext = $extraProcessesClass->onFileSave($doNext);
+
+                // ======================================================
+                // MDT'S DON'T MATCH, OFFER TO LOAD FILE & SHOW DIFF VIEW
+                // ======================================================
+
+            } else {
+                $fileClass->loadAndShowDiff();
+            }
+
+            // ===================
+            // FILE IS UNWRITEABLE
+            // ===================
+
+        } else {
+            $finalAction = "nothing";
+            $doNext .= "ICEcoder.message('" . $t['Sorry, cannot save'] . "\\\\n" . $file . "');";
+        }
+        $doNext .= 'ICEcoder.serverMessage(); ICEcoder.serverQueue("del");';
+    }
 };
 
-// Get the contents of a remote URL
-if ($_GET['action']=="getRemoteFile") {
-	if ($remoteFile = toUTF8noBOM(file_get_contents($file,false,$context),true)) {
-		// replace \r\n (Windows), \r (old Mac) and \n (Linux) line endings with whatever we chose to be lineEnding
-		$remoteFile = str_replace("\r\n", $ICEcoder["lineEnding"], $remoteFile);
-		$remoteFile = str_replace("\r", $ICEcoder["lineEnding"], $remoteFile);
-		$remoteFile = str_replace("\n", $ICEcoder["lineEnding"], $remoteFile);
-		echo 'top.ICEcoder.newTab();';
-		echo '</script><textarea name="remoteFile" id="remoteFile">'.str_replace("</textarea>","<ICEcoder:/:textarea>",str_replace("&","&amp;",$remoteFile)).'</textarea><script>';
-		echo 'top.ICEcoder.getcMInstance().setValue(document.getElementById("remoteFile").value);action="getRemoteFile";';
-		// Run our custom processes
-		include_once("../processes/on-get-remote-file.php");
-	} else {
-		echo 'action="nothing"; top.ICEcoder.message(\''.$t['Sorry, could not...'].' '.$file.'\');';
-	}
-	echo 'top.ICEcoder.serverMessage();top.ICEcoder.serverQueue("del",0);';
-}
+// ==========
+// NEW FOLDER
+// ==========
 
-// If we're due to add a new folder...
-if ($_GET['action']=="newFolder") {
-	if (!$demoMode && is_writable($docRoot.$fileLoc)) {
-		mkdir($file, 0705);
-		// Reload file manager
-		echo 'top.ICEcoder.selectedFiles=[];top.ICEcoder.updateFileManagerList(\'add\',\''.$fileLoc.'\',\''.$fileName.'\',false,false,false,\'folder\');action="newFolder";';
-		// Run our custom processes
-		include_once("../processes/on-new-dir.php");
-	} else {
-		echo "action='nothing'; top.ICEcoder.message('".$t['Sorry, cannot create...']."\\n".$fileLoc."');";
-	}
-	echo 'top.ICEcoder.serverMessage();top.ICEcoder.serverQueue("del",0);';
-}
-
-// If we're due to paste a new file...
-if ($_GET['action']=="paste") {
-	$source = $file;
-	$dest = str_replace("//","/",$docRoot.$iceRoot.strClean(str_replace("|","/",$_GET['location']))."/".basename($source));
-	if (!$demoMode && is_writable(dirname($dest))) {
-		if (is_dir($source)) {
-			$fileOrFolder = "folder";
-			if (!is_dir($dest)) {
-				mkdir($dest, 0705);
-			} else {
-				for ($i=2; $i<1000000000; $i++) {
-					if (!is_dir($dest." (".$i.")")) {
-						$dest = $dest." (".$i.")";
-						mkdir($dest, 0705);
-						$i=1000000000;
-					}
-				}
-			}
-			foreach ($iterator = new RecursiveIteratorIterator(
-				new RecursiveDirectoryIterator($source, RecursiveDirectoryIterator::SKIP_DOTS),
-				RecursiveIteratorIterator::SELF_FIRST) as $item
-				) {
-				if ($item->isDir()) {
-					mkdir($dest.DIRECTORY_SEPARATOR.$iterator->getSubPathName(), 0705);
-				} else {
-					copy($item, $dest.DIRECTORY_SEPARATOR.$iterator->getSubPathName());
-				}
-			}
-		} else {
-			$fileOrFolder = "file";
-			if (!file_exists($dest)) {
-				copy($source, $dest);
-			} else {
-				for ($i=2; $i<1000000000; $i++) {
-					if (!file_exists($dest." (".$i.")")) {
-						$dest = $dest." (".$i.")";
-						copy($source, $dest);
-						$i=1000000000;
-					}
-				}
-			}
-		}
-		// Reload file manager
-		echo 'top.ICEcoder.updateFileManagerList(\'add\',\''.strClean(str_replace("|","/",$_GET['location'])).'\',\''.basename($dest).'\',false,false,false,\''.$fileOrFolder.'\');action="pasteFile";';
-		// Run our custom processes
-		include_once("../processes/on-file-dir-paste.php");
-	} else {
-		echo "action='nothing'; top.ICEcoder.message('".$t['Sorry, cannot copy']." \\n".str_replace($docRoot,"",$source)."\\n ".$t['into']." \\n".str_replace($docRoot,"",$dest)."');";
-	}
-	echo 'top.ICEcoder.serverMessage();top.ICEcoder.serverQueue("del",0);';
-}
-
-// If we're due to upload files...
-if ($_GET['action']=="upload") {
-	if (!$demoMode) {
-		class fileUploader {  
-			public function __construct($uploads) {
-				global $docRoot,$iceRoot;
-				$uploadDir=$docRoot.$iceRoot.str_replace("..","",str_replace("|","/",strClean($_POST['folder'])."/"));
-				foreach($uploads as $current) {  
-					$this->uploadFile=$uploadDir.$current->name;
-					$fileName = $current->name;
-					if ($this->upload($current,$this->uploadFile)) {
-						echo 'action="upload"; top.ICEcoder.updateFileManagerList(\'add\',top.ICEcoder.selectedFiles[top.ICEcoder.selectedFiles.length-1].replace(/\|/g,\'/\'),\''.str_replace("'","\'",$fileName).'\',false,false,true,\'file\'); top.ICEcoder.serverMessage("'.$t['Uploaded file(s) OK'].'");setTimeout(function(){top.ICEcoder.serverMessage();},2000);';
-					} else {
-						echo "action='nothing'; top.ICEcoder.message('".$t['Sorry, cannot upload']." \\n".$fileName."\\n ".$t['into']." \\n'+top.ICEcoder.selectedFiles[top.ICEcoder.selectedFiles.length-1].replace(/\|/g,'/'));";
-					}
-				}  
-			}  
-
-			public function upload($current,$uploadFile){ 
-				if(move_uploaded_file($current->tmp_name,$uploadFile)){
-					return true;  
-				}  
-			}  
-		}
-
-		function getDetails($fileArr) {
-			foreach($fileArr['name'] as $keyee => $info) {
-				$uploads[$keyee]->name=$fileArr['name'][$keyee];  
-				$uploads[$keyee]->type=$fileArr['type'][$keyee];  
-				$uploads[$keyee]->tmp_name=$fileArr['tmp_name'][$keyee];  
-				$uploads[$keyee]->error=$fileArr['error'][$keyee];  
-			}  
-			return $uploads;  
-		}
-
-		if($_FILES['filesInput']){  
-			$uploads = getDetails($_FILES['filesInput']);
-			$fileUploader=new fileUploader($uploads);
-		}
-		// Run our custom processes
-		include_once("../processes/on-file-upload.php");
-	} else {
-		echo "action='nothing'; top.ICEcoder.message('".$t['Sorry, cannot upload...']."');";
-	}
-
-	echo "top.ICEcoder.hideFileMenu();top.document.getElementById('fileInput').value='';top.ICEcoder.showHide('hide',top.document.getElementById('loadingMask'));";
-}
-
-// If we're due to rename a file/folder...
-if ($_GET['action']=="rename") {
-	$renamed=false;
-	if (!$demoMode && is_writable($docRoot.$iceRoot.str_replace("|","/",strClean($_GET['oldFileName'])))) {
-		if(rename($docRoot.$iceRoot.str_replace("|","/",strClean($_GET['oldFileName'])),$docRoot.$fileLoc."/".$fileName)) {
-			// Reload file manager
-			echo 'top.ICEcoder.selectedFiles=[];top.ICEcoder.updateFileManagerList(\'rename\',\''.$fileLoc.'\',\''.$fileName.'\',\'\',\''.str_replace($iceRoot,"",strClean($_GET['oldFileName'])).'\');';
-			echo 'action="rename";';
-			$renamed=true;
-			// Run our custom processes
-			include_once("../processes/on-file-dir-rename.php");
-		}
-	}
-	if (!$renamed) {
-		echo "action='nothing'; top.ICEcoder.message('".$t['Sorry, cannot rename']."\\n".strClean($_GET['oldFileName'])."\\n\\n".$t['Maybe public write...']."');";
-	}
-	echo 'top.ICEcoder.serverMessage();top.ICEcoder.serverQueue("del",0);';
-}
-
-// If we're due to move a file/folder...
-if ($_GET['action']=="move") {
-	$moved=false;
-	$srcDir = $docRoot.$iceRoot.str_replace("|","/",strClean($_GET['oldFileName']));
-	$tgtDir = $docRoot.$fileLoc."/".$fileName;
-	if ($srcDir != $tgtDir && $fileLoc != "") {
-		if (!$demoMode && is_writable($srcDir)) {
-			if(rename($srcDir,$tgtDir)) {
-				// Reload file manager
-				$fileOrFolder = is_dir($docRoot.$fileLoc."/".$fileName) ? "folder" : "file";
-				echo 'top.ICEcoder.selectedFiles=[];top.ICEcoder.updateFileManagerList(\'move\',\''.$fileLoc.'\',\''.$fileName.'\',\'\',\''.str_replace($iceRoot,"",strClean($_GET['oldFileName'])).'\',false,\''.$fileOrFolder.'\');';
-				echo 'action="move";';
-				$moved=true;
-				// Run our custom processes
-				include_once("../processes/on-file-dir-move.php");
-			}
-		}
-		if (!$moved) {
-			echo "action='nothing'; top.ICEcoder.message('".$t['Sorry, cannot move']."\\n".strClean($_GET['oldFileName'])."\\n\\n".$t['Maybe public write...']."');";
-		}
-	} else {
-		echo "action='nothing';";
-	}
-	echo 'top.ICEcoder.serverMessage();top.ICEcoder.serverQueue("del",0);';
-}
-
-// If we're due to replace text in a file...
-if ($_GET['action']=="replaceText") {
-	if (!$demoMode && is_writable(str_replace("|","/",strClean($_GET['fileRef'])))) {
-		$file = str_replace("|","/",strClean($_GET['fileRef']));
-		$loadedFile = toUTF8noBOM(file_get_contents($file,false,$context),true);
-		$newContent = str_replace(strClean($_GET['find']),strClean($_GET['replace']),$loadedFile);
-		$fh = fopen($file, 'w') or die($t['Sorry, cannot save']);
-		fwrite($fh, $newContent);
-		fclose($fh);
-		echo 'action="replaceText";';
-		// Run our custom processes
-		include_once("../processes/on-file-replace-text.php");
-	} else {
-		echo "action='nothing'; top.ICEcoder.message('".$t['Sorry, cannot replace...']."\\n".strClean($_GET['fileRef'])."');";
-	}
-	echo 'top.ICEcoder.serverMessage();top.ICEcoder.serverQueue("del",0);';
-}
-
-// If we're due to change permissions on a file/folder...
-if ($_GET['action']=="perms") {
-	if (!$demoMode && is_writable($file)) {
-		chmod($file,octdec(numClean($_GET['perms'])));
-		// Reload file manager
-		echo 'top.ICEcoder.selectedFiles=[];top.ICEcoder.updateFileManagerList(\'chmod\',\''.$fileLoc.'\',\''.$fileName.'\',\''.numClean($_GET['perms']).'\');';
-		echo 'action="perms";';
-		// Run our custom processes
-		include_once("../processes/on-file-dir-perms.php");
-	} else {
-		echo "action='nothing'; top.ICEcoder.message('".$t['Sorry, cannot change...']." \\n".strClean($file)."');";
-	}
-	echo 'top.ICEcoder.serverMessage();top.ICEcoder.serverQueue("del",0);';
-}
-
-// If we're due to delete a file...
-if ($_GET['action']=="delete") {
-	$filesArray = explode(";",$file); // May contain more than one file here
-	for ($i=0;$i<count($filesArray);$i++) {
-		$fullPath = str_replace($docRoot,"",$filesArray[$i]);
-		$fullPath = str_replace($iceRoot,"",$fullPath);
-		$fullPath = $docRoot.$iceRoot.$fullPath;
-
-		if (rtrim($fullPath,"/") == rtrim($docRoot,"/")) {
-			echo "top.ICEcoder.message('".$t['Sorry, cannot delete...']."');";
-		} else if (!$demoMode && is_writable($fullPath)) {
-			is_dir($fullPath)
-				? rrmdir($fullPath)
-				: unlink($fullPath);
-			$fileName = basename($fullPath);
-			$fileLoc = dirname(str_replace($docRoot,"",$fullPath));
-			if ($fileLoc=="" || $fileLoc=="\\") {$fileLoc="/";};
-			// Reload file manager
-			echo 'top.ICEcoder.selectedFiles=[];top.ICEcoder.updateFileManagerList(\'delete\',\''.$fileLoc.'\',\''.$fileName.'\');';
-			echo 'action="delete";';
-			// Run our custom processes
-			include_once("../processes/on-file-dir-delete.php");
-		} else {
-			echo "top.ICEcoder.message('".$t['Sorry, cannot delete']."\\n".str_replace($docRoot,"",$fullPath)."');";
-		}
-		echo 'action="nothing";';
-	}
-	echo 'top.ICEcoder.serverMessage();top.ICEcoder.serverQueue("del",0);';
-}
-
-// The function to recursively remove folders & files
-function rrmdir($dir) { 
-	if (is_dir($dir)) { 
-		$objects = scandir($dir); 
-		foreach ($objects as $object) { 
-			if ($object != "." && $object != "..") { 
-				filetype($dir."/".$object) == "dir" 
-					? rrmdir($dir."/".$object)
-					: unlink($dir."/".$object); 
-			} 
-		} 
-		reset($objects); 
-	rmdir($dir); 
-	} 
-} 
-
-if ($_GET['action']=="save") {
-	echo 'action="save";';
-	// on the form posting via a reload, save the file
-	if (isset($_POST['contents'])) {
-		if (!$demoMode && ((file_exists($file) && is_writable($file)) || isset($_POST['newFileName']) && $_POST['newFileName']!="")) {
-			$filemtime = $serverType=="Linux" ? filemtime($file) : "1000000";
-			if (!(isset($_GET['fileMDT']))||$filemtime==$_GET['fileMDT']) {
-				$fh = fopen($file, 'w') or die($t['Sorry, cannot save']);
-				// replace \r\n (Windows), \r (old Mac) and \n (Linux) line endings with whatever we chose to be lineEnding
-				$contents = $_POST['contents'];
-				$contents = str_replace("\r\n", $ICEcoder["lineEnding"], $contents);
-				$contents = str_replace("\r", $ICEcoder["lineEnding"], $contents);
-				$contents = str_replace("\n", $ICEcoder["lineEnding"], $contents);
-				// Now write that content, close the file and clear the statcache
-				fwrite($fh, $contents);
-				fclose($fh);
-				clearstatcache();
-				$filemtime = $serverType=="Linux" ? filemtime($file) : "1000000";
-				echo 'top.ICEcoder.openFileMDTs[top.ICEcoder.selectedTab-1]="'.$filemtime.'";';
-				// Reload file manager, rename tab & remove old file highlighting if it was a new file
-				if (isset($_POST['newFileName']) && $_POST['newFileName']!="") {
-					echo 'top.ICEcoder.selectedFiles=[];top.ICEcoder.updateFileManagerList(\'add\',\''.$fileLoc.'\',\''.$fileName.'\',false,false,false,\'file\');';
-					echo 'top.ICEcoder.renameTab(top.ICEcoder.selectedTab,\''.$fileLoc."/".$fileName.'\');';
-					if (!strpos($_GET['file'],"[NEW]")) {
-						// We're saving as a new file, so unhighlight the old name in the file manager if visible
-						echo "fileLink = top.ICEcoder.filesFrame.contentWindow.document.getElementById('".str_replace("/","|",$fileLoc)."|".basename($_GET['file'])."');";
-						echo "if (fileLink) {fileLink.style.backgroundColor = top.ICEcoder.tabBGnormal; fileLink.style.color = top.ICEcoder.tabFGnormalFile};";
-					}
-				}
-				// Reload previewWindow window if not a Markdown file
-				echo 'if (top.ICEcoder.previewWindow.location && top.ICEcoder.previewWindow.location.pathname.indexOf(".md")==-1) {
-					top.ICEcoder.previewWindow.location.reload();
-					// Do the pesticide plugin if it exists
-					try {top.ICEcoder.doPesticide();} catch(err) {};
-				};';
-				echo 'top.ICEcoder.setPreviousFiles();setTimeout(function(){top.ICEcoder.indicateChanges()},4);action="doneSave";';
-				// Run our custom processes
-				include_once("../processes/on-file-save.php");
-			} else {
-				$loadedFile = toUTF8noBOM(file_get_contents($file,false,$context),true);
-				echo '</script><textarea name="loadedFile" id="loadedFile">'.str_replace("</textarea>","<ICEcoder:/:textarea>",htmlentities($loadedFile)).'</textarea>';
-				echo '<textarea name="userVersionFile" id="userVersionFile"></textarea><script>';
-				?>
-				var refreshFile = top.ICEcoder.ask('<?php echo $t['Sorry, this file...']."\\n".$file."\\n\\n".$t['Reload this file...'];?>');
-				if (refreshFile) {
-					var cM = top.ICEcoder.getcMInstance();
-					var thisTab = top.ICEcoder.selectedTab;
-					document.getElementById('userVersionFile').value = cM.getValue();
-					// Revert back to original
-					cM.setValue(document.getElementById('loadedFile').value);
-					top.ICEcoder.savedPoints[thisTab-1] = cM.changeGeneration();
-					top.ICEcoder.openFileMDTs[top.ICEcoder.selectedTab-1] = "<?php echo $filemtime; ?>";
-					cM.clearHistory();
-					// Now for the new version in the diff pane
-					top.ICEcoder.setSplitPane('on');
-					var cMdiff = top.ICEcoder.getcMdiffInstance();
-					cMdiff.setValue(document.getElementById('userVersionFile').value);
-				}
-				action='nothing';
-				<?php
-			}
-        	} else {
-			echo "action='nothing';top.ICEcoder.message('".$t['Sorry, cannot save']."\\n".$file."');";
-		}
-	echo 'top.ICEcoder.serverMessage();top.ICEcoder.serverQueue("del",0);';
-	}
+if (!$error && "newFolder" === $_GET['action']) {
+    if (!$demoMode && is_writable($docRoot . $fileLoc)) {
+        mkdir($file, octdec((string) $ICEcoder['newDirPerms']));
+        $fileClass->updateFileManager('add', $fileLoc, $fileName, '', '', '', 'folder');
+        $finalAction = "newFolder";
+        // Run any extra processes
+        $extraProcessesClass = new ExtraProcesses($fileLoc, $fileName);
+        $doNext = $extraProcessesClass->onDirNew($doNext);
+    } else {
+        $doNext .= "ICEcoder.message('" . $t['Sorry, cannot create...'] . "\\\\n" . $fileLoc . "');";
+        $finalAction = "nothing";
+    }
+    $doNext .= 'ICEcoder.serverMessage(); ICEcoder.serverQueue("del");';
 };
-?>
-if (action=="load") {
-	if (fileType=="text") {
-		setTimeout(function() {
-			if (!top.ICEcoder.content.contentWindow.createNewCMInstance) {
-				console.log('<?php echo $t['There was a...']; ?>');
-				window.location.reload();
-			<?php
-			if (file_exists($file)) {
-			?>
-			} else {
-				top.ICEcoder.loadingFile = true;
-				// Reset the various states back to their initial setting
-				selectedTab = top.ICEcoder.openFiles.length;	// The tab that's currently selected
 
-				// Finally, store all data, show tabs etc
-				top.ICEcoder.createNewTab();
-				top.ICEcoder.cMInstances.push(top.ICEcoder.nextcMInstance);
-				top.ICEcoder.setLayout();
-				top.ICEcoder.content.contentWindow.createNewCMInstance(top.ICEcoder.nextcMInstance);
+// ================
+// MOVE FILE/FOLDER
+// ================
 
-				// If we're in GitHub diff mode and have a split pane display, get the content for the diff pane
-				if (top.ICEcoder.githubDiff && top.ICEcoder.splitPane) {
-					<?php
-					// Get our GitHub relative site path & local path
-					$ghRemoteURLPos = array_search($ICEcoder["root"],$ICEcoder['githubLocalPaths']);
+if (!$error && "move" === $_GET['action']) {
+    $srcDir = $docRoot . $iceRoot . str_replace("|", "/", $_GET['oldFileName']);
+    $tgtDir = $docRoot . $fileLoc . "/" . $fileName;
+    if ($srcDir != $tgtDir) {
+        if (!$demoMode && is_writable($srcDir)) {
+            if(rename($srcDir, $tgtDir)) {
+                // Is a dir or file (needed to create new item in file manager)
+                $fileOrFolder = is_dir($docRoot . $fileLoc . "/" . $fileName) ? "folder" : "file";
+                $fileClass->updateFileManager('move', $fileLoc, $fileName, '', str_replace($iceRoot, "", str_replace("|", "/", $_GET['oldFileName'])), '', $fileOrFolder);
+                $doNext .= 'tabNum = ICEcoder.openFiles.indexOf(\'' . str_replace("|", "/", $_GET['oldFileName']) . '\') + 1; if (0 < tabNum) {ICEcoder.renameTab(tabNum, \'' . $fileLoc . "/" . $fileName . '\');};';
+                $finalAction = "move";
+                // Run any extra processes
+                $extraProcessesClass = new ExtraProcesses($fileLoc, $fileName);
+                $doNext = $extraProcessesClass->onFileDirMove($doNext);
+            } else {
+                $doNext .= "ICEcoder.message('" . $t['Sorry, cannot move'] . "\\\\n" . str_replace("|", "/", $_GET['oldFileName']) . "\\\\n\\\\n" . $t['Maybe public write...'] . "');";
+                $finalAction = "nothing";
+            }
+        } else {
+            $doNext .= "ICEcoder.message('" . $t['Sorry, cannot move'] . "\\\\n" . str_replace("|", "/", $_GET['oldFileName']) . "\\\\n\\\\n" . $t['Maybe public write...'] . "');";
+            $finalAction = "nothing";
+        }
+    } else {
+        $doNext .= "";
+        $finalAction = "nothing";
+    }
+    $doNext .= 'ICEcoder.serverMessage(); ICEcoder.serverQueue("del");';
+};
 
-					$ghLocalURLPaths = $ICEcoder['githubLocalPaths'];
-					$ghLocalPath = $ghLocalURLPaths[$ghRemoteURLPos];
+// ==================
+// RENAME FILE/FOLDER
+// ==================
 
-					$ghRemoteURLPaths = $ICEcoder['githubRemotePaths'];
-					$ghRemoteURL = $ghRemoteURLPaths[$ghRemoteURLPos];
+if (!$error && "rename" === $_GET['action']) {
+    if (!$demoMode && is_writable($docRoot . $iceRoot . str_replace("|", "/", $_GET['oldFileName']))) {
+        if (true === file_exists($docRoot . $fileLoc)) {
+            rename($docRoot.$iceRoot.str_replace("|", "/", $_GET['oldFileName']), $docRoot . $fileLoc . "/" . $fileName);
+            $fileClass->updateFileManager('rename', $fileLoc, $fileName, '', str_replace($iceRoot, "", $_GET['oldFileName']), '', '');
+            $doNext .= 'tabNum = ICEcoder.openFiles.indexOf(\'' . str_replace("|", "/", $_GET['oldFileName']) . '\') + 1; if (0 < tabNum) {ICEcoder.renameTab(tabNum, \'' . $fileLoc . "/" . $fileName . '\');};';
+            $finalAction = "rename";
+            // Run any extra processes
+            $extraProcessesClass = new ExtraProcesses($fileLoc, $fileName);
+            $doNext = $extraProcessesClass->onFileDirRename($doNext);
+        } else {
+            $doNext .= "ICEcoder.message('".$t['Sorry, cannot rename'] . "\\\\n" . str_replace("|", "/", $_GET['oldFileName']) . "\\\\n\\\\n" . $t['does not seem...'] . "');";
+            $finalAction = "nothing";
+        }
+    } else {
+        $doNext .= "ICEcoder.message('".$t['Sorry, cannot rename'] . "\\\\n" . str_replace("|", "/", $_GET['oldFileName']) . "\\\\n\\\\n" . $t['Maybe public write...'] . "');";
+        $finalAction = "nothing";
+    }
+    $doNext .= 'ICEcoder.serverMessage(); ICEcoder.serverQueue("del");';
+};
 
-					$ghRemoteURL = str_replace("https://github.com/","",$ghRemoteURL);
-					$ghRemoteURL = str_replace("/","|",$ghRemoteURL);
+// =================
+// PASTE FILE/FOLDER
+// =================
 
-					// If the file is not in a sub-sub dir of the doc root
-					if (!strpos($fileLoc,"/",1)) {
-						// The file path is simply the file name in the root
-						$ghFilePath = $fileName;
-					} else {
-						// We need to get rid of the root dir and trailing slash
-						$ghFilePath = substr(str_replace($ghLocalPath,"",$fileLoc),1);
-						// If it's not within a sub-dir, it's just the filename, otherwise prefix with dir path and pipe
-						$ghFilePath = $ghFilePath == "" ? $fileName : $ghFilePath."|".$fileName;
-					}
-					?>
+if (!$error && "paste" === $_GET['action']) {
+    $source = $file;
+    $dest = str_replace("//", "/", $docRoot . $iceRoot . str_replace("|", "/", $_GET['location']) . "/" . basename($source));
+    if (!$demoMode && is_writable(dirname($dest))) {
 
-					top.ICEcoder.filesFrame.contentWindow.frames['processControl'].location.href = "github.php?action=read&repo=<?php echo $ghRemoteURL;?>&filePath=<?php echo $ghFilePath;?>&csrf="+top.ICEcoder.csrf;
-				}
+        $fileOrFolder = $fileClass->paste();
 
-				// Set the value & innerHTML of the code textarea to that of our loaded file plus make it visible (it's hidden on ICEcoder's load)
-				top.ICEcoder.switchMode();
-				cM = top.ICEcoder.getcMInstance();
-				cM.setValue(document.getElementById('loadedFile').value);
-				top.ICEcoder.savedPoints[top.ICEcoder.selectedTab-1] = cM.changeGeneration();
-				top.document.getElementById('content').style.visibility='visible';
-				top.ICEcoder.switchTab(top.ICEcoder.selectedTab);
-				top.ICEcoder.focus();
+        // Reload file manager
+        $doNext .= 'ICEcoder.updateFileManagerList(\'add\', \'' . str_replace("|", "/", $_GET['location']) . '\', \'' . basename($dest) . '\', false, false, false, \'' . $fileOrFolder . '\');';
+        $finalAction = "pasteFile";
+        // Run any extra processes
+        $extraProcessesClass = new ExtraProcesses($fileLoc, $fileName);
+        $doNext = $extraProcessesClass->onFileDirPaste($doNext, $dest);
+    } else {
+        $doNext .= "ICEcoder.message('" . $t['Sorry, cannot copy'] . " \\\\n" . str_replace($docRoot, "", $source) . "\\\\n " . $t['into'] . " \\\\n" . str_replace($docRoot, "", $dest) . "');";
+        $finalAction = "nothing";
+    }
+    $doNext .= 'ICEcoder.serverMessage(); ICEcoder.serverQueue("del");';
+};
 
-				// Then clean it up, set the text cursor, update the display and get the character data
-				top.ICEcoder.contentCleanUp();
-				top.ICEcoder.content.contentWindow['cM'+top.ICEcoder.cMInstances[top.ICEcoder.selectedTab-1]].removeLineClass(top.ICEcoder['cMActiveLinecM'+top.ICEcoder.cMInstances[top.ICEcoder.selectedTab-1]], "background");
-				top.ICEcoder['cMActiveLinecM'+top.ICEcoder.selectedTab] = top.ICEcoder.content.contentWindow['cM'+top.ICEcoder.cMInstances[top.ICEcoder.selectedTab-1]].addLineClass(0, "background", "cm-s-activeLine");
-				top.ICEcoder.nextcMInstance++;
-				top.ICEcoder.openFileMDTs.push('<?php echo $serverType=="Linux" ? filemtime($file) : "1000000"; ?>');
-				for (var i=0; i<cM.lineCount(); i++) {
-					top.ICEcoder.content.contentWindow.CodeMirror.doFold(cM.getLine(i).indexOf("{")>-1?"brace":"xml",null,"+","-",true)(cM, i);
-				}
-				top.ICEcoder.loadingFile = false;
-			<?php
-			;};
-			?>
-			}
-		},4);
-	}
+// ==============
+// UPLOAD FILE(S)
+// ==============
 
-	if (fileType=="image") {
-		top.document.getElementById('blackMask').style.visibility = "visible";
-		top.document.getElementById('mediaContainer').innerHTML = 
-			"<canvas id=\"canvasPicker\" width=\"1\" height=\"1\" style=\"position: absolute; margin: 10px 0 0 10px; cursor: crosshair\" onmouseover=\"top.ICEcoder.overPopup=true\" onmouseout=\"top.ICEcoder.overPopup=false\"></canvas>" + 
-			"<img src=\"<?php echo $fileLoc."/".$fileName;?>\" class=\"whiteGlow\" style=\"border: solid 10px #fff; max-width: 700px; max-height: 500px; background-color: #000; background-image: url('images/checkerboard.png')\" onLoad=\"reducedImgMsg = (this.naturalWidth > 700 || this.naturalHeight > 500) ? ', <?php echo $t['displayed at']; ?> ' + this.width + ' x ' + this.height : ''; document.getElementById('imgInfo').innerHTML += ' (' + this.naturalWidth + ' x ' + this.naturalHeight + reducedImgMsg + ')'; top.ICEcoder.drawCanvasImage(this)\"><br>" +
-			"<div class=\"whiteGlow\" style=\"display: inline-block; margin-top: -10px; border: solid 10px #fff; color: #000; background-color: #fff\" id=\"imgInfo\"  onmouseover=\"top.ICEcoder.overPopup=true\" onmouseout=\"top.ICEcoder.overPopup=false\">" + 
-				"<b><?php echo $fileLoc."/".$fileName;?></b>" + 
-			"</div><br>" + 
-			"<input type=\"text\" id=\"hexMouseXY\" style=\"border: 1px solid #888; border-right: 0; width: 70px\" onmouseover=\"top.ICEcoder.overPopup=true\" onmouseout=\"top.ICEcoder.overPopup=false\"></input>" + 
-			"<input type=\"text\" id=\"rgbMouseXY\" style=\"border: 1px solid #888; margin-right: 10px; width: 70px\" onmouseover=\"top.ICEcoder.overPopup=true\" onmouseout=\"top.ICEcoder.overPopup=false\"></input>" + 
-			"<input type=\"text\" id=\"hex\" style=\"border: 1px solid #888; border-right: 0; width: 70px\" onmouseover=\"top.ICEcoder.overPopup=true\" onmouseout=\"top.ICEcoder.overPopup=false\"></input>" + 
-			"<input type=\"text\" id=\"rgb\" style=\"border: 1px solid #888; width: 70px\" onmouseover=\"top.ICEcoder.overPopup=true\" onmouseout=\"top.ICEcoder.overPopup=false\"></input>";
-	}
+if (!$error && "upload" === $_GET['action']) {
+    if (!$demoMode) {
 
-	top.ICEcoder.serverMessage();top.ICEcoder.serverQueue("del",0);
+        if ($_FILES['filesInput']){
+            $uploads = $fileClass->getUploadedDetails($_FILES['filesInput']);
+            $finalAction = $fileClass->upload($uploads);
+        }
+        // Run any extra processes
+        $extraProcessesClass = new ExtraProcesses($fileLoc, $fileName);
+        $doNext = $extraProcessesClass->onFileUpload($doNext, $uploads);
+    } else {
+        $doNext .= "parent.parent.ICEcoder.message('" . $t['Sorry, cannot upload...'] . "');";
+        $finalAction = "nothing";
+    }
+
+    $doNext .= "parent.parent.ICEcoder.hideFileMenu(); parent.parent.document.getElementById('fileInput').value = ''; parent.parent.ICEcoder.showHide('hide', parent.parent.document.getElementById('loadingMask'));";
+
+    // Upload is not handled by XHR methods, but form post, so we need to manually trigger $doNext in a script tag
+    echo "<script>".$doNext."</script>";
+};
+
+// ========================
+// DELETE FILE(S)/FOLDER(S)
+// ========================
+
+if (!$error && "delete" === $_GET['action']) {
+    $filesArray = explode(";", $file); // May contain more than one file here
+    $fileClass->delete();
+    $doNext .= 'ICEcoder.serverMessage(); ICEcoder.serverQueue("del");';
+};
+
+// ======================
+// REPLACE TEXT IN A FILE
+// ======================
+
+if (!$error && "replaceText" === $_GET['action']) {
+    if (!$demoMode && is_writable($file)) {
+        $loadedFile = toUTF8noBOM(getData($file), true);
+        $find = $_GET['find'];
+        $newContent = preg_replace("/($find)/i", $_GET['replace'], $loadedFile);
+        $fh = fopen($file, 'w') or die($t['Sorry, cannot save']);
+        fwrite($fh, $newContent);
+        fclose($fh);
+        $finalAction = "replaceText";
+
+        // Run any extra processes
+        $extraProcessesClass = new ExtraProcesses($fileLoc, $fileName);
+        $doNext = $extraProcessesClass->onFileReplaceText($doNext, $_GET['fileRef']);
+
+    } else {
+        $doNext .= "ICEcoder.message('" . $t['Sorry, cannot replace...'] . "\\\\n" . $file . "');";
+        $finalAction = "nothing";
+    }
+
+    $doNext .= 'ICEcoder.serverMessage(); ICEcoder.serverQueue("del");';
+};
+
+// ==========================
+// GET CONTENTS OF REMOTE URL
+// ==========================
+
+if (!$error && "getRemoteFile" === $_GET['action']) {
+    $lineNumber = max(isset($_REQUEST['lineNumber']) ? intval($_REQUEST['lineNumber']) : 1, 1);
+
+    if ($remoteFile = toUTF8noBOM(getData($file, 'curl'), true)) {
+        // Get URL contents
+        $urlClass = new URL($remoteFile);
+        $doNext .= $urlClass->load($ICEcoder["lineEnding"], $lineNumber);
+        $finalAction = "getRemoteFile";
+
+        // Run any extra processes
+        $extraProcessesClass = new ExtraProcesses($fileLoc);
+        $doNext = $extraProcessesClass->onGetRemoteFile($doNext);
+
+    } else {
+        $finalAction = "nothing";
+        $doNext .= 'ICEcoder.message(\'' . $t['Sorry, could not...'] . ' '.$file . '\');';
+    }
+
+    $doNext .= 'ICEcoder.serverMessage(); ICEcoder.serverQueue("del");';
+};
+
+// =======================
+// CHANGING FILE/DIR PERMS
+// =======================
+
+if (!$error && "perms" === $_GET['action']) {
+    if (!$demoMode && is_writable($file)) {
+        chmod($file, octdec((string) numClean($_GET['perms'])));
+        $fileClass->updateFileManager('chmod', $fileLoc, $fileName, numClean($_GET['perms']), '', '', '');
+        $finalAction = "perms";
+        // Run any custom processes
+        $extraProcessesClass = new ExtraProcesses($fileLoc, $fileName);
+        $doNext = $extraProcessesClass->onFileDirPerms($doNext, $_GET['perms']);
+    } else {
+        $finalAction = "nothing";
+        $doNext .= "ICEcoder.message('" . $t['Sorry, cannot change...'] . " \\\\n" . $file . "');";
+    }
+    $doNext .= 'ICEcoder.serverMessage(); ICEcoder.serverQueue("del");';
+};
+
+// ====================
+// CHECK FOR A FILE/DIR
+// ====================
+
+if (!$error && "checkExists" === $_GET['action']) {
+    // This action is called under seperate AJAX call and the responseText object stored in ICEcoder.lastFileDirCheckStatusObj
+    // Nothing really done here though, we do something with the responseText
+    $finalAction = "checkExists";
+    $doNext .= 'ICEcoder.serverMessage(); ICEcoder.serverQueue("del");';
+};
+
+// ===================
+// JSON DATA TO RETURN
+// ===================
+
+// No $filemtime yet? Get it now!
+if (false === isset($filemtime) && !is_dir($file)) {
+    $filemtime = "Windows" !== $serverType && file_exists($file) ? filemtime($file) : 1000000;
 }
-</script>
-
-<form name="saveFile" action="file-control.php?action=save&file=<?php if (isset($file)) {echo $file;}; if (isset($_GET['fileMDT']) && $_GET['fileMDT']!="undefined") {echo "&fileMDT=".numClean($_GET['fileMDT']);};?>" method="POST">
-	<textarea name="contents"></textarea>
-	<input type="hidden" name="newFileName" value="">
-	<input type="hidden" name="csrf" value="<?php echo $_SESSION["csrf"]; ?>">
-</form>
-
-<script>
-if (action=="save") {
-	<?php
-	if (strpos($fileOrig,"[NEW]")>0||$saveType=="saveAs") {
-	?>
-		fileLoc = '<?php echo $fileLoc;?>';
-		newFileName = top.ICEcoder.getInput('<?php echo $t['Enter filename to...']; ?> '+(fileLoc!='' ? fileLoc : '/'),'');
-		if (newFileName) {
-			if (newFileName.substr(0,1)!="/") {newFileName = "/" + newFileName}
-			newFileName = fileLoc + newFileName;
-			if (top.document.getElementById('filesFrame').contentWindow.document.getElementById(newFileName.replace(/\//g,"|"))) {
-				overwriteOK = top.ICEcoder.ask('<?php echo $t['That file exists...']; ?>');
-			}
-		}
-		document.saveFile.newFileName.value = '<?php echo $docRoot; ?>' + newFileName;
-	<?php ;};?>
-	if ("undefined" == typeof newFileName || (newFileName && "undefined" == typeof overwriteOK) || ("undefined" != typeof overwriteOK && overwriteOK)) {
-		top.ICEcoder.serverMessage('<b><?php echo $t['Saving']; ?></b><br>'+ <?php echo strpos($fileOrig,"[NEW]")>0 ? "newFileName" : "'$file'"; ?>);
-		document.saveFile.contents.value = top.document.getElementById('saveTemp1').value;
-		document.saveFile.submit();
-	} else {
-		top.ICEcoder.serverMessage();top.ICEcoder.serverQueue("del",0);
-		action=="nothing";
-	}
+if (false === isset($filemtime)) {
+    $filemtime = 1000000;
 }
 
-if (action=="doneSave") {
-	cM = top.ICEcoder.getcMInstance();
-	top.ICEcoder.savedPoints[top.ICEcoder.selectedTab-1] = cM.changeGeneration();
-	top.ICEcoder.redoTabHighlight(top.ICEcoder.selectedTab);
+// Set $timeStart, use 0 if not available
+$timeStart = isset($_POST["timeStart"]) ? numClean($_POST["timeStart"]) : 0;
+if ($timeStart == "") {
+    $timeStart = 0;
 }
 
-// Finally, switch mode in case we have saved, renamed file etc
-top.ICEcoder.switchMode();
-</script>
+echo $fileClass->returnJSON();
+
+// Set timestamp of last index to 0 to force a re-index next time we index
+requireReIndexNextTime();

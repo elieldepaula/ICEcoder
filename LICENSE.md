@@ -1,10 +1,15 @@
-Copyright: © 2014 Matt Pass  
-Website:   mattpass.com  
-Email:     matt@mattpass.com  
-Twitter:   @mattpass
+Copyright: Â© 2020 ICEcoder Ltd
 
-#ICEcoder License
-##Standard Open Source Initiative MIT License
+Website:   icecoder.net
+
+Email:     info@icecoder.net
+
+Twitter:   @icecoder
+
+# ICEcoder License
+
+## Standard Open Source Initiative MIT License
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

@@ -1,21 +1,17 @@
 <?php
-include("headers.php");
-include("settings.php");
+require "icecoder.php";
+
+use ICEcoder\File;
 
 // Establish the real absolute path to the file
-$file = realpath($docRoot.$iceRoot.str_replace("|","/",strClean($_GET['file'])));
+$filePath = realpath($docRoot . $iceRoot . str_replace("|", "/", $_GET['file']));
 // If it doesn't exist, or doesn't start with the $docRoot, stop here
-if (!file_exists($file) || strpos($file,$docRoot) !== 0) {
-	die("<script>alert('Sorry, that file doesn\'t appear to exist');</script>");
+if (false === file_exists($filePath) || 0 !== strpos(str_replace("\\", "/", $filePath), $docRoot)) {
+	die("<script>ICEcoder.message('Sorry, that file doesn\'t appear to exist');</script>");
 }
 
-if (file_exists($file)) {
-    header('Content-Description: File Transfer');
-    header('Content-Disposition: attachment; filename='.basename($file));
-    header('Content-Length: '.filesize($file));
-    ob_clean();
-    flush();
-    readfile($file);
+if (true === file_exists($filePath)) {
+    $file = new File();
+    $file->download($filePath);
     exit;
 }
-?>
