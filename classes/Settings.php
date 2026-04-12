@@ -4,6 +4,11 @@ namespace ICEcoder;
 
 class Settings
 {
+
+    public $versionNo;
+    public $docRoot;
+    public $assetsRoot;
+
     public function __construct()
     {
         // Set version number and document root as core settings

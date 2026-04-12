@@ -18,16 +18,28 @@ if (!isset($_SESSION["csrf"])) {
 	$_SESSION["csrf"] = md5(uniqid(mt_rand(), true));
 }
 
-if (($_POST || $_GET) && !$_POST["csrf"] && !$_GET["csrf"]) {
-	$req = xssClean($_POST["csrf"] ?? $_GET['csrf'] ?? "", "html");
-    if ($req !== $_SESSION["csrf"]) {
+if (!empty($_POST) || !empty($_GET)) {
+    $csrfPost = $_POST['csrf'] ?? null;
+    $csrfGet  = $_GET['csrf'] ?? null;
+    $csrf     = $csrfPost ?? $csrfGet;
+
+    if (empty($csrf)) {
+        die('Bad CSRF token ...');
+    }
+
+    $req = xssClean($csrf, 'html');
+    $sessionCsrf = $_SESSION['csrf'] ?? '';
+
+    if ($req !== $sessionCsrf) {
+        $t['Bad CSRF token...'] = $t['Bad CSRF token...'] ?? 'Bad CSRF token...';
+
         die($t['Bad CSRF token...'] . "<br><br>
             CSRF issue:<br>
             REQUEST: " . $req . "<br>
-            SESSION: " . xssClean($_SESSION["csrf"], "html") . "<br>
-            FILE: " . xssClean($_SERVER["SCRIPT_NAME"], "html") . "<br>
-            GET: " . xssClean(var_export($_GET, true), "html") . "<br>
-            POST: " . xssClean(var_export($_POST, true), "html"));
+            SESSION: " . xssClean($sessionCsrf, 'html') . "<br>
+            FILE: " . xssClean($_SERVER['SCRIPT_NAME'] ?? '', 'html') . "<br>
+            GET: " . xssClean(var_export($_GET, true), 'html') . "<br>
+            POST: " . xssClean(var_export($_POST, true), 'html'));
     }
 }
 

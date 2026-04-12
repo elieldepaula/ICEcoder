@@ -1,6 +1,6 @@
 <?php
 // Exit early if no .git dir
-if (false === file_exists(dirname(__FILE__) . "/../.git")) {
+if (false === file_exists(__DIR__ . "/../.git")) {
     exit;
 }
 // Only run internally on server, not from internet
@@ -13,19 +13,19 @@ if (isset($_SERVER['HTTP_HOST'])) {
 // Require a re-index dir/file data next time we index
 function requireReIndexNextTime() {
         // If we have a data/index.php file
-        if (file_exists(dirname(__FILE__)."/../data/index.php")) {
+        if (file_exists(__DIR__."/../data/index.php")) {
                 // Get serialized array back out of PHP file inside a comment block as prevIndexData
                 if (function_exists('opcache_invalidate')) {
-                        opcache_invalidate(dirname(__FILE__)."/../data/index.php", true);
+                        opcache_invalidate(__DIR__."/../data/index.php", true);
                 }
-                $prevIndexData = file_get_contents(dirname(__FILE__)."/../data/index.php");
+                $prevIndexData = file_get_contents(__DIR__."/../data/index.php");
                 if (strpos($prevIndexData, "<?php") !== false) {
                         $prevIndexData = str_replace("<?php\n/*\n\n", "", $prevIndexData);
                         $prevIndexData = str_replace("\n\n*/\n?>", "", $prevIndexData);
                         $prevIndexData = unserialize($prevIndexData);
                         // Set timestamp back to epoch to force a re-index next time
                         $prevIndexData['timestamps']['indexed'] = 0;
-                        file_put_contents(dirname(__FILE__)."/../data/index.php", "<?php\n/*\n\n".serialize($prevIndexData)."\n\n*/\n?".">");
+                        file_put_contents(__DIR__."/../data/index.php", "<?php\n/*\n\n".serialize($prevIndexData)."\n\n*/\n?".">");
                 }
         }
 }
@@ -45,15 +45,15 @@ while(true) {
                 $diffLines = explode("\n", $gitData);
                 $output = ["paths" => array_filter($diffLines)];
                 // Store the serialized array in PHP comment block for pick up
-                file_put_contents(dirname(__FILE__)."/../data/git-diff.php", "<?php\n/*\n\n".serialize($output)."\n\n*/\n?".">");
+                file_put_contents(__DIR__."/../data/git-diff.php", "<?php\n/*\n\n".serialize($output)."\n\n*/\n?".">");
                 // Set Git contents
                 $output = [];
                 $paths = array_filter($diffLines);
                 shell_exec("cd ..");
                 for ($i=0; $i<count($paths); $i++) {
-                        if (strpos(mime_content_type(dirname(__FILE__)."/../../".$paths[$i]), "text") !== false) {
+                        if (strpos(mime_content_type(__DIR__."/../../".$paths[$i]), "text") !== false) {
                                 $content = shell_exec("cd .. && git show HEAD:".$paths[$i]);
-                                $wd = dirname(dirname(dirname(__FILE__)));
+                                $wd = dirname(dirname(__DIR__));
                                 if ($content !== "") {
                                         $output[$wd."/".$paths[$i]] = [
                                                 "type" => "modified",
@@ -62,7 +62,7 @@ while(true) {
                                 }
                         }
                 }
-                file_put_contents(dirname(__FILE__)."/../data/git-content.php", "<?php\n/*\n\n".serialize($output)."\n\n*/\n?".">");
+                file_put_contents(__DIR__."/../data/git-content.php", "<?php\n/*\n\n".serialize($output)."\n\n*/\n?".">");
         }
         // Set prev MD5 to this one, ready for next time
         $prevMD5 = $thisMD5;
